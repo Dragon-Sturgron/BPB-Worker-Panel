@@ -1,3 +1,6 @@
+import { globalConfig, httpConfig } from "#common/init";
+import { settings } from '#common/handlers'
+
 export function isDomain(address) {
     if (!address) return false;
     const domainPattern = /^(?!-)(?:[A-Za-z0-9-]{1,63}.)+[A-Za-z]{2,}$/;
@@ -5,7 +8,7 @@ export function isDomain(address) {
 }
 
 export async function resolveDNS(domain, onlyIPv4 = false) {
-    const dohBaseURL = `${globalThis.dohURL}?name=${encodeURIComponent(domain)}`;
+    const dohBaseURL = `${globalConfig.dohURL}?name=${encodeURIComponent(domain)}`;
     const dohURLs = {
         ipv4: `${dohBaseURL}&type=A`,
         ipv6: `${dohBaseURL}&type=AAAA`,
@@ -13,7 +16,7 @@ export async function resolveDNS(domain, onlyIPv4 = false) {
 
     try {
         const ipv4 = await fetchDNSRecords(dohURLs.ipv4, 1);
-        const ipv6 = onlyIPv4 ? [] : await fetchDNSRecords(dohURLs.ipv4, 28);
+        const ipv6 = onlyIPv4 ? [] : await fetchDNSRecords(dohURLs.ipv6, 28);
         return { ipv4, ipv6 };
     } catch (error) {
         throw new Error(`Error resolving DNS for ${domain}: ${error.message}`);
@@ -35,14 +38,12 @@ async function fetchDNSRecords(url, recordType) {
 }
 
 export async function getConfigAddresses(isFragment) {
-    const { settings, hostName } = globalThis;
-    const resolved = await resolveDNS(hostName);
-    const defaultIPv6 = settings.VLTRenableIPv6 ? resolved.ipv6.map((ip) => `[${ip}]`) : [];
+    const resolved = await resolveDNS(httpConfig.hostName, !settings.VLTRenableIPv6);
     const addrs = [
-        hostName,
+        httpConfig.hostName,
         'www.speedtest.net',
         ...resolved.ipv4,
-        ...defaultIPv6,
+        ...resolved.ipv6.map((ip) => `[${ip}]`),
         ...settings.cleanIPs
     ];
 
@@ -91,12 +92,11 @@ export function getRandomString(lengthMin, lengthMax) {
 }
 
 export function generateWsPath(protocol) {
-    const settings = globalThis.settings;
     const config = {
         junk: getRandomString(8, 16),
         protocol: protocol,
         mode: settings.proxyIPMode,
-        panelIPs: settings.proxyIPMode === 'proxyip' ? settings.proxyIPs : settings.nat64Prefixes
+        panelIPs: settings.proxyIPMode === 'proxyip' ? settings.proxyIPs : settings.prefixes
     };
 
     const encodedConfig = btoa(JSON.stringify(config));
@@ -134,3 +134,21 @@ export function getDomain(url) {
 export function base64EncodeUnicode(str) {
     return btoa(String.fromCharCode(...new TextEncoder().encode(str)));
 }
+
+export function parseHostPort(input, brackets) {
+    const regex = /^(?:\[(?<ipv6>.+?)\]|(?<host>[^:]+))(:(?<port>\d+))?$/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    let ipv6 = match.groups.ipv6;
+    if (brackets && ipv6) {
+        ipv6 = `[${ipv6}]`;
+    }
+
+    const host = ipv6 || match.groups.host;
+    const port = match.groups.port ? parseInt(match.groups.port, 10) : null;
+
+    return { host, port };
+}
+
